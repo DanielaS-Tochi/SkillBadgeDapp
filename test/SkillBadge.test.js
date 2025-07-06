@@ -7,9 +7,8 @@ describe("SkillBadge", function () {
 
     beforeEach(async function () {
         [owner, addr1, addr2] = await ethers.getSigners();
-        
         const SkillBadge = await ethers.getContractFactory("SkillBadge");
-        skillBadge = await SkillBadge.deploy();
+        skillBadge = await SkillBadge.deploy(0); // 0 = default 10,000
         await skillBadge.waitForDeployment();
     });
 
@@ -53,15 +52,18 @@ describe("SkillBadge", function () {
         });
 
         it("Should not exceed maximum badges", async function () {
-    // Mint 9999 badges (uno menos que el límite)
-    for (let i = 0; i < 9999; i++) {
-        await skillBadge.awardBadge(addr1.address, `Skill ${i}`, "URI");
-    }
-
-    // Intentamos mintar el badge 10000
-    const tx = skillBadge.awardBadge(addr1.address, "Skill", "URI");
-    await expect(tx).to.be.revertedWith("Maximum number of badges reached");
-});
+            // Desplegamos un contrato con un límite pequeño (3)
+            const SkillBadgeFactory = await ethers.getContractFactory("SkillBadge");
+            const smallLimit = 3;
+            const skillBadgeLimited = await SkillBadgeFactory.deploy(smallLimit);
+            await skillBadgeLimited.waitForDeployment();
+            for (let i = 0; i < smallLimit; i++) {
+                await skillBadgeLimited.awardBadge(addr1.address, `Skill ${i}`, "URI");
+            }
+            // Intentamos mintear el badge que excede el límite
+            const tx = skillBadgeLimited.awardBadge(addr1.address, "Skill", "URI");
+            await expect(tx).to.be.revertedWith("Maximum number of badges reached");
+        });
     });
 
     describe("Ownership", function () {
@@ -193,6 +195,47 @@ describe("SkillBadge", function () {
             expect(storedSkillName).to.equal(skillName);
             expect(storedEvidenceURI).to.equal(evidenceURI);
             expect(issuedDate).to.be.greaterThan(0);
+        });
+    });
+
+    describe("Endorsements", function () {
+        let tokenId;
+        beforeEach(async function () {
+            const skillName = "Solidity Developer";
+            const evidenceURI = "https://example.com/skills/solidity-developer";
+            const tx = await skillBadge.awardBadge(addr1.address, skillName, evidenceURI);
+            const receipt = await tx.wait(1);
+            const filter = skillBadge.filters.BadgeAwarded();
+            const events = await skillBadge.queryFilter(filter);
+            tokenId = events[0].args.tokenId;
+        });
+
+        it("Should allow a user to endorse a badge", async function () {
+            await expect(skillBadge.connect(addr2).endorseBadge(tokenId))
+                .to.emit(skillBadge, "BadgeEndorsed")
+                .withArgs(tokenId, addr2.address);
+            const endorsers = await skillBadge.getEndorsers(tokenId);
+            expect(endorsers).to.include(addr2.address);
+        });
+
+        it("Should not allow double endorsement by the same user", async function () {
+            await skillBadge.connect(addr2).endorseBadge(tokenId);
+            await expect(skillBadge.connect(addr2).endorseBadge(tokenId))
+                .to.be.revertedWith("Already endorsed this badge");
+        });
+
+        it("Should not allow endorsement of a non-existent badge", async function () {
+            await expect(skillBadge.connect(addr2).endorseBadge(9999))
+                .to.be.revertedWith("Token does not exist");
+        });
+
+        it("Should return all endorsers for a badge", async function () {
+            await skillBadge.connect(addr1).endorseBadge(tokenId);
+            await skillBadge.connect(addr2).endorseBadge(tokenId);
+            const endorsers = await skillBadge.getEndorsers(tokenId);
+            expect(endorsers).to.include(addr1.address);
+            expect(endorsers).to.include(addr2.address);
+            expect(endorsers.length).to.equal(2);
         });
     });
 });

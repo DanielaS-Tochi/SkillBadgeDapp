@@ -11,10 +11,11 @@ contract SkillBadge is ERC721, Ownable {
     using Strings for uint256;
 
     Counters.Counter private _tokenIds;
-    uint256 private constant MAX_BADGES = 10000;
+    uint256 private immutable MAX_BADGES;
 
     event BadgeAwarded(uint256 indexed tokenId, address indexed recipient, string skillName, uint256 issuedDate);
     event BadgeMetadataUpdated(uint256 indexed tokenId, string newEvidenceURI);
+    event BadgeEndorsed(uint256 indexed tokenId, address indexed endorser);
 
     struct Badge {
         string skillName;
@@ -23,8 +24,12 @@ contract SkillBadge is ERC721, Ownable {
     }
 
     mapping(uint256 => Badge) private _badges;
+    mapping(uint256 => address[]) private _endorsers;
+    mapping(uint256 => mapping(address => bool)) private _hasEndorsed;
 
-    constructor() ERC721("SkillBadge", "SB") {}
+    constructor(uint256 maxBadges_) ERC721("SkillBadge", "SB") {
+        MAX_BADGES = (maxBadges_ == 0) ? 10000 : maxBadges_;
+    }
 
     function awardBadge(address recipient, string memory skillName, string memory evidenceURI) public onlyOwner returns (uint256) {
         require(recipient != address(0), "Recipient cannot be zero address");
@@ -60,5 +65,25 @@ contract SkillBadge is ERC721, Ownable {
 
     function _baseURI() internal pure override returns (string memory) {
         return "https://api.your-domain.com/badges/";
+    }
+
+    /**
+     * @dev Endorse a badge (tokenId). A user can endorse a badge only once.
+     * Emits a BadgeEndorsed event.
+     */
+    function endorseBadge(uint256 tokenId) public {
+        require(_exists(tokenId), "Token does not exist");
+        require(!_hasEndorsed[tokenId][msg.sender], "Already endorsed this badge");
+        _endorsers[tokenId].push(msg.sender);
+        _hasEndorsed[tokenId][msg.sender] = true;
+        emit BadgeEndorsed(tokenId, msg.sender);
+    }
+
+    /**
+     * @dev Returns the list of endorsers for a badge (tokenId).
+     */
+    function getEndorsers(uint256 tokenId) public view returns (address[] memory) {
+        require(_exists(tokenId), "Token does not exist");
+        return _endorsers[tokenId];
     }
 }
