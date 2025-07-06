@@ -1,4 +1,4 @@
-const { expect } = require("chai");
+const { expect, anyValue } = require("chai");
 const { ethers } = require("hardhat");
 
 describe("SkillBadge", function () {
@@ -236,6 +236,91 @@ describe("SkillBadge", function () {
             expect(endorsers).to.include(addr1.address);
             expect(endorsers).to.include(addr2.address);
             expect(endorsers.length).to.equal(2);
+        });
+    });
+
+    describe("Issuers", function () {
+        let owner, issuer, nonIssuer, recipient, SkillBadge, skillBadge;
+        beforeEach(async function () {
+            [owner, issuer, nonIssuer, recipient] = await ethers.getSigners();
+            SkillBadge = await ethers.getContractFactory("SkillBadge");
+            skillBadge = await SkillBadge.deploy(0); // default limit
+            await skillBadge.waitForDeployment();
+        });
+
+        it("Owner can add and remove issuers", async function () {
+            await expect(skillBadge.connect(owner).addIssuer(issuer.address))
+                .to.emit(skillBadge, "IssuerAdded").withArgs(issuer.address);
+            expect(await skillBadge.isIssuer(issuer.address)).to.be.true;
+            await expect(skillBadge.connect(owner).removeIssuer(issuer.address))
+                .to.emit(skillBadge, "IssuerRemoved").withArgs(issuer.address);
+            expect(await skillBadge.isIssuer(issuer.address)).to.be.false;
+        });
+
+        it("Non-owner cannot add or remove issuers", async function () {
+            await expect(skillBadge.connect(nonIssuer).addIssuer(issuer.address))
+                .to.be.revertedWith("Ownable: caller is not the owner");
+            await skillBadge.connect(owner).addIssuer(issuer.address);
+            await expect(skillBadge.connect(nonIssuer).removeIssuer(issuer.address))
+                .to.be.revertedWith("Ownable: caller is not the owner");
+        });
+
+        it("Issuer can mint badges to non-issuer addresses", async function () {
+            await skillBadge.connect(owner).addIssuer(issuer.address);
+            const skillName = "React Developer";
+            const evidenceURI = "https://example.com/skills/react-developer";
+            const tx = await skillBadge.connect(issuer).awardBadge(recipient.address, skillName, evidenceURI);
+            const receipt = await tx.wait();
+            const event = receipt.logs
+                .map(log => {
+                    try { return skillBadge.interface.parseLog(log); } catch { return null; }
+                })
+                .find(e => e && e.name === "BadgeAwarded");
+            expect(event).to.not.be.undefined;
+            expect(event.args.recipient).to.equal(recipient.address);
+            expect(event.args.skillName).to.equal(skillName);
+        });
+
+        it("Issuer cannot mint badges to themselves", async function () {
+            await skillBadge.connect(owner).addIssuer(issuer.address);
+            await expect(skillBadge.connect(issuer).awardBadge(issuer.address, "Skill", "URI"))
+                .to.be.revertedWith("Issuers can only mint to non-issuer addresses");
+        });
+
+        it("Issuer cannot mint badges to other issuers", async function () {
+            await skillBadge.connect(owner).addIssuer(issuer.address);
+            await skillBadge.connect(owner).addIssuer(nonIssuer.address);
+            await expect(skillBadge.connect(issuer).awardBadge(nonIssuer.address, "Skill", "URI"))
+                .to.be.revertedWith("Issuers can only mint to non-issuer addresses");
+        });
+
+        it("Non-issuer cannot mint badges", async function () {
+            const skillName = "Vue Developer";
+            const evidenceURI = "https://example.com/skills/vue-developer";
+            await expect(skillBadge.connect(nonIssuer).awardBadge(recipient.address, skillName, evidenceURI))
+                .to.be.revertedWith("Not authorized to mint");
+        });
+
+        it("Owner can always mint badges to anyone", async function () {
+            await skillBadge.connect(owner).addIssuer(issuer.address);
+            const skillName = "Angular Developer";
+            const evidenceURI = "https://example.com/skills/angular-developer";
+            const tx = await skillBadge.connect(owner).awardBadge(issuer.address, skillName, evidenceURI);
+            const receipt = await tx.wait();
+            const event = receipt.logs
+                .map(log => {
+                    try { return skillBadge.interface.parseLog(log); } catch { return null; }
+                })
+                .find(e => e && e.name === "BadgeAwarded");
+            expect(event).to.not.be.undefined;
+            expect(event.args.recipient).to.equal(issuer.address);
+            expect(event.args.skillName).to.equal(skillName);
+        });
+
+        it("isIssuer returns correct status", async function () {
+            expect(await skillBadge.isIssuer(issuer.address)).to.be.false;
+            await skillBadge.connect(owner).addIssuer(issuer.address);
+            expect(await skillBadge.isIssuer(issuer.address)).to.be.true;
         });
     });
 });

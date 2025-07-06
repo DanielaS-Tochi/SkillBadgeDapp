@@ -16,6 +16,8 @@ contract SkillBadge is ERC721, Ownable {
     event BadgeAwarded(uint256 indexed tokenId, address indexed recipient, string skillName, uint256 issuedDate);
     event BadgeMetadataUpdated(uint256 indexed tokenId, string newEvidenceURI);
     event BadgeEndorsed(uint256 indexed tokenId, address indexed endorser);
+    event IssuerAdded(address indexed issuer);
+    event IssuerRemoved(address indexed issuer);
 
     struct Badge {
         string skillName;
@@ -26,15 +28,54 @@ contract SkillBadge is ERC721, Ownable {
     mapping(uint256 => Badge) private _badges;
     mapping(uint256 => address[]) private _endorsers;
     mapping(uint256 => mapping(address => bool)) private _hasEndorsed;
+    mapping(address => bool) private _issuers;
 
     constructor(uint256 maxBadges_) ERC721("SkillBadge", "SB") {
         MAX_BADGES = (maxBadges_ == 0) ? 10000 : maxBadges_;
     }
 
-    function awardBadge(address recipient, string memory skillName, string memory evidenceURI) public onlyOwner returns (uint256) {
+    /**
+     * @dev Add a new issuer. Only owner can call.
+     */
+    function addIssuer(address issuer) public onlyOwner {
+        require(issuer != address(0), "Issuer cannot be zero address");
+        require(!_issuers[issuer], "Already an issuer");
+        _issuers[issuer] = true;
+        emit IssuerAdded(issuer);
+    }
+
+    /**
+     * @dev Remove an issuer. Only owner can call.
+     */
+    function removeIssuer(address issuer) public onlyOwner {
+        require(_issuers[issuer], "Not an issuer");
+        _issuers[issuer] = false;
+        emit IssuerRemoved(issuer);
+    }
+
+    /**
+     * @dev Returns true if the address is an authorized issuer.
+     */
+    function isIssuer(address account) public view returns (bool) {
+        return _issuers[account];
+    }
+
+    /**
+     * @dev Mint a badge to a recipient. Only owner or issuer can call.
+     * Unique: Issuers cannot mint badges to themselves or to other issuers (only to non-issuer addresses).
+     */
+    function awardBadge(address recipient, string memory skillName, string memory evidenceURI) public returns (uint256) {
         require(recipient != address(0), "Recipient cannot be zero address");
         require(bytes(skillName).length > 0, "Skill name cannot be empty");
         require(bytes(evidenceURI).length > 0, "Evidence URI cannot be empty");
+
+        bool senderIsOwner = (msg.sender == owner());
+        bool senderIsIssuer = _issuers[msg.sender];
+        require(senderIsOwner || senderIsIssuer, "Not authorized to mint");
+        // Unique: Issuers cannot mint to themselves or to other issuers
+        if (senderIsIssuer && !senderIsOwner) {
+            require(!_issuers[recipient] && recipient != msg.sender, "Issuers can only mint to non-issuer addresses");
+        }
 
         uint256 newItemId = _tokenIds.current();
         require(newItemId < MAX_BADGES, "Maximum number of badges reached");
